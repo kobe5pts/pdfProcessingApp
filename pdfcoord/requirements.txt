@@ -4,7 +4,7 @@ charset-normalizer==3.3.2
 contourpy==1.2.1
 cryptography==42.0.8
 cycler==0.12.1
-Django==5.0.6
+Django==4.2.13
 fonttools==4.53.0
 kiwisolver==1.4.5
 matplotlib==3.9.0
