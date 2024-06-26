@@ -1,0 +1,233 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Select Coordinates</title>
+    <style>
+        #canvas-container {
+            position: relative;
+            display: inline-block;
+        }
+        #pdf-page {
+            display: block;
+            max-width: 100%;
+        }
+        #pdf-canvas {
+            border: 1px solid black;
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 10;
+        }
+        #save-coordinates {
+            display: inline-block;
+            margin-left: 10px;
+            padding: 10px 20px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            cursor: pointer;
+            position: relative;
+            z-index: 5;
+        }
+        #save-coordinates:hover {
+            background-color: #45a049;
+        }
+        #upload-new-pdf {
+            background-color: #f44336; 
+            margin-top: 10px;
+        }
+        #upload-new-pdf:hover {
+            background-color: #d32f2f; 
+        }
+        #submit-coordinates {
+            display: block;
+            margin-top: 20px;
+            padding: 10px 20px;
+            background-color: #2196F3; 
+            color: white;
+            border: none;
+            cursor: pointer;
+            position: relative;
+            z-index: 5;
+        }
+        #submit-coordinates:hover {
+            background-color: #1E88E5; 
+        }
+    </style>
+</head>
+<body>
+    <h1>Select Coordinates</h1>
+    <div>
+        <label for="start-page">Start Page:</label>
+        <input type="number" id="start-page" name="start-page" min="0" value="{{ current_page }}">
+        <label for="end-page">End Page:</label>
+        <input type="number" id="end-page" name="end-page" min="0" value="{{ current_page }}">
+    </div>
+    <div>
+        <label for="keyword">Keyword:</label>
+        <select id="keyword" name="keyword">
+            <option value="Id Number">Id Number</option>
+            <option value="RFID">RFID</option>
+            <option value="Item Category">Item Category</option>
+            <option value="Item Description">Item Description</option>
+            <option value="Model">Model</option>
+            <option value="SWL">SWL</option>
+            <option value="Manufacturer">Manufacturer</option>
+            <option value="Certificate No">Certificate No</option>
+            <option value="Page No with same Cert. No">Page No with same Cert. No</option>
+            <option value="Location">Location</option>
+            <option value="Detailed Location">Detailed Location</option>
+            <option value="Previous Inspection">Previous Inspection</option>
+            <option value="Next Inspection Due Date">Next Inspection Due Date</option>
+            <option value="Fit For Purpose Y/N">Fit For Purpose Y/N</option>
+            <option value="Status">Status</option>
+            <option value="Provider Identification">Provider Identification</option>
+        </select>
+        <button id="save-coordinates">Save Coordinates</button>
+    </div>
+    <div>
+        <button id="prev-page" {% if previous_page is None %}disabled{% endif %}>Previous Page</button>
+        <button id="next-page" {% if next_page is None %}disabled{% endif %}>Next Page</button>
+    </div>
+    <div>
+        <label for="specific-page">Go to Page:</label>
+        <input type="number" id="specific-page" name="specific-page" min="0" max="{{ total_pages|add:"-1" }}">
+        <button id="go-page">Go</button>
+    </div>
+    <div id="canvas-container">
+        {% if img_url %}
+            <img src="{{ img_url }}" alt="PDF Page" id="pdf-page">
+            <canvas id="pdf-canvas"></canvas>
+        {% else %}
+            <p>No image available</p>
+        {% endif %}
+    </div>
+    <br>
+    <button id="upload-new-pdf" onclick="window.location.href='{% url 'upload_pdf' %}'">Upload New PDF</button>
+    <button id="submit-coordinates">Submit Coordinates</button>
+
+    <script>
+        const img = document.getElementById('pdf-page');
+        const canvas = document.getElementById('pdf-canvas');
+        const ctx = canvas.getContext('2d');
+        let coords = [];
+    
+        img.onload = function() {
+            canvas.width = img.width;
+            canvas.height = img.height;
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        };
+    
+        let startX, startY, isDrawing = false;
+    
+        canvas.addEventListener('mousedown', function(event) {
+            const rect = canvas.getBoundingClientRect();
+            startX = event.clientX - rect.left;
+            startY = event.clientY - rect.top;
+            isDrawing = true;
+        });
+    
+        canvas.addEventListener('mousemove', function(event) {
+            if (isDrawing) {
+                const rect = canvas.getBoundingClientRect();
+                const x = event.clientX - rect.left;
+                const y = event.clientY - rect.top;
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                ctx.beginPath();
+                ctx.rect(startX, startY, x - startX, y - startY);
+                ctx.stroke();
+            }
+        });
+    
+        canvas.addEventListener('mouseup', function(event) {
+            if (isDrawing) {
+                const rect = canvas.getBoundingClientRect();
+                const endX = event.clientX - rect.left;
+                const endY = event.clientY - rect.top;
+                // Clear the coordinates array to ensure only the latest selection is retained
+                coords = [];
+    
+                // Check if endX and endY are different from startX and startY
+                if (startX !== endX || startY !== endY) {
+                    coords.push({x0: startX, y0: startY, x1: endX, y1: endY});
+                }
+    
+                isDrawing = false;
+                console.log('Coordinates:', coords);
+            }
+        });
+    
+        const processedKeywords = new Set();
+    
+        document.getElementById('save-coordinates').addEventListener('click', function() {
+            const startPage = document.getElementById('start-page').value;
+            const endPage = document.getElementById('end-page').value;
+            const keyword = document.getElementById('keyword').value;
+    
+            if (processedKeywords.has(`${keyword}-${startPage}-${endPage}`)) {
+                console.log(`Keyword "${keyword}" for pages ${startPage}-${endPage} has already been processed.`);
+                return;
+            }
+    
+            processedKeywords.add(`${keyword}-${startPage}-${endPage}`);
+    
+            fetch(window.location.href, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': '{{ csrf_token }}'
+                },
+                body: JSON.stringify({
+                    coordinates: coords,
+                    start_page: parseInt(startPage),
+                    end_page: parseInt(endPage),
+                    keyword: keyword
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log(data);
+                coords = []; // Clear the coordinates array after saving
+            })
+            .catch(error => console.error('Error:', error));
+        });
+    
+        document.getElementById('prev-page').addEventListener('click', function() {
+            const previousPage = {{ previous_page|default:"null" }};
+            if (previousPage !== null) {
+                window.location.href = `/select_coords/{{ pdf_id }}/${previousPage}/`;
+            }
+        });
+    
+        document.getElementById('next-page').addEventListener('click', function() {
+            const nextPage = {{ next_page|default:"null" }};
+            if (nextPage !== null) {
+                window.location.href = `/select_coords/{{ pdf_id }}/${nextPage}/`;
+            }
+        });
+    
+        document.getElementById('go-page').addEventListener('click', function() {
+            const specificPage = document.getElementById('specific-page').value;
+            if (specificPage >= 0 && specificPage < {{ total_pages }}) {
+                window.location.href = `/select_coords/{{ pdf_id }}/${specificPage}/`;
+            } else {
+                alert('Invalid page number');
+            }
+        });
+    
+        document.getElementById('submit-coordinates').addEventListener('click', function() {
+            fetch('/submit_coordinates/{{ pdf_id }}/', {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': '{{ csrf_token }}'
+                }
+            })
+            .then(response => response.json())
+            .then(data => console.log(data))
+            .catch(error => console.error('Error:', error));
+        });
+    </script>
+</body>
+</html>
