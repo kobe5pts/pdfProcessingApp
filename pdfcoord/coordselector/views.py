@@ -10,6 +10,7 @@ from django.conf import settings
 from django.core.cache import cache
 import fitz  # PyMuPDF
 from .forms import UploadPDFForm
+from .tasks import process_pdf  # Import Celery 
 
 def home(request):
     return render(request, 'coordselector/home.html')
@@ -62,7 +63,7 @@ def upload_pdf(request):
                 return redirect('select_coords', pdf_id=document.id)  # Adjust as per your application
 
             # Handle processing existing keyword
-            elif action == 'process' and selected_keyword:
+            elif pdf_file and action == 'process' and selected_keyword:
                 keyword_coords_dir = os.path.join(settings.MEDIA_ROOT, 'keyword_coords')
                 keyword_final_coords_path = os.path.join(keyword_coords_dir, f'{selected_keyword}_final_coords.json')
 
@@ -80,21 +81,28 @@ def upload_pdf(request):
                             if os.path.isfile(file_path):
                                 os.unlink(file_path)                    
                     
-                    transfer_path = os.path.join(transfer_dir, f'{selected_keyword}_final_coords.json')
+                    transfer_path = os.path.join(transfer_dir, f'final_coords.json')
 
                     with open(transfer_path, 'w') as f:
                         json.dump(final_coords, f, indent=4)
 
-                    # Save the uploaded PDF
-                    pdf_file = request.FILES.get('pdf_file')
-                    if pdf_file:
-                        pdfs_dir = os.path.join(settings.MEDIA_ROOT, 'pdfs')
-                        os.makedirs(pdfs_dir, exist_ok=True)
-                        pdf_save_path = os.path.join(pdfs_dir, pdf_file.name)
-                        with open(pdf_save_path, 'wb') as pdf_out:
-                            for chunk in pdf_file.chunks():
-                                pdf_out.write(chunk)
+                    # Save the uploaded PDF in the pdfs directory
+                    pdfs_dir = os.path.join(settings.MEDIA_ROOT, 'pdfs')
+                    os.makedirs(pdfs_dir, exist_ok=True)
+                    pdf_path = os.path.join(pdfs_dir, pdf_file.name)
 
+                    # Save the PDF in chunks to handle large files
+                    with open(pdf_path, 'wb') as pdf_out:
+                        for chunk in pdf_file.chunks():
+                            pdf_out.write(chunk)
+                
+                    # Create and save PDFDocument
+                    document = PDFDocument(file=pdf_file)
+                    document.save()
+                    pdf_id=document.id
+                    
+                    process_pdf(pdf_id, pdf_path)
+                    
                     # Additional processing logic if needed
                 else:
                     error_message = f'No final_coords.json found for the keyword "{selected_keyword}".'
@@ -218,12 +226,16 @@ def select_coords(request, pdf_id, page_number=0):
     }
     return render(request, 'coordselector/select_coords.html', context)
 
+
 def submit_coordinates(request, pdf_id):
     if request.method == "POST":
+        document = PDFDocument.objects.get(pk=pdf_id) #
+        pdf_path = document.file.path 
+        
         json_file_path = os.path.join(settings.MEDIA_ROOT, f'pdf_coords_{pdf_id}.json')
-        final_json_file_path = os.path.join(settings.MEDIA_ROOT, 'final_coords.json')
+        final_json_file_path = os.path.join(settings.MEDIA_ROOT, 'transferred', 'final_coords.json')
 
-        if not os.path.exists(final_json_file_path):
+        if not os.path.exists(final_json_file_path): #include
             with open(final_json_file_path, 'w') as f:
                 json.dump({}, f)  # Initialize with an empty dictionary
 
@@ -265,8 +277,45 @@ def submit_coordinates(request, pdf_id):
                     with open(keyword_final_coords_path, 'w') as f:
                         json.dump(final_coords, f, indent=4)
 
+            process_pdf(pdf_id, pdf_path)
+            # print(pdf_id, pdf_path)
+
             return JsonResponse({'status': 'success'})
         else:
             return JsonResponse({'status': 'error', 'message': 'No coordinates found'})
 
     return JsonResponse({'status': 'error', 'message': 'Invalid request method'})
+
+
+def delete_keyword(request):
+    if request.method == 'POST':
+        try:
+            data = json.loads(request.body)
+            keyword = data.get('keyword')
+            
+            # Load existing keywords from the JSON file
+            saved_keywords_path = os.path.join(settings.MEDIA_ROOT, 'saved_keywords.json')
+            if os.path.exists(saved_keywords_path):
+                with open(saved_keywords_path, 'r') as f:
+                    saved_keywords = json.load(f)
+
+                # Remove the keyword if it exists
+                if keyword in saved_keywords:
+                    saved_keywords.remove(keyword)
+                    with open(saved_keywords_path, 'w') as f:
+                        json.dump(saved_keywords, f, indent=4)
+
+                    # Delete the corresponding JSON file in the keyword_coords directory
+                    keyword_coords_path = os.path.join(settings.MEDIA_ROOT, 'keyword_coords', f'{keyword}_final_coords.json')
+                    if os.path.exists(keyword_coords_path):
+                        os.remove(keyword_coords_path)
+
+                    return JsonResponse({'success': True})
+                else:
+                    return JsonResponse({'success': False, 'error': 'Keyword not found'})
+            else:
+                return JsonResponse({'success': False, 'error': 'Keywords file not found'})
+        except Exception as e:
+            return JsonResponse({'success': False, 'error': str(e)})
+
+    return JsonResponse({'success': False, 'error': 'Invalid request method'})

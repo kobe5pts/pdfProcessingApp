@@ -7,4 +7,6 @@ urlpatterns = [
     path('select_coords/<int:pdf_id>/', views.select_coords, name='select_coords'),
     path('select_coords/<int:pdf_id>/<int:page_number>/', views.select_coords, name='select_coords_page'),
     path('submit_coordinates/<int:pdf_id>/', views.submit_coordinates, name='submit_coordinates'),
+    path('delete_keyword/', views.delete_keyword, name='delete_keyword'),
 ]
+
